@@ -1,6 +1,6 @@
 import logging
 import sqlite3
-
+from time import perf_counter
 from app.radarr import query_movie, contact_radarr
 from app.jellyfin import organize_movies, fetch_jellyfin_movies
 
@@ -35,15 +35,20 @@ def setup_db() -> sqlite3.Connection:
 def main():
 
     conn = setup_db()
-
+    start = perf_counter()
     data = fetch_jellyfin_movies()
     if data is None:
         logging.error("fetch_jellyfin_movies returned None")
         return
+    logging.info("fetch_jellyfin_movies took %.2fs", perf_counter() - start)
 
+    start = perf_counter()
     organize_movies(data, conn)
+    logging.info("organize_movies took %.2fs", perf_counter() - start)
 
+    start = perf_counter()
     query_movie(conn)
+    logging.info("query_movie took %.2fs", perf_counter() - start)
 
 
 if __name__ == "__main__":
