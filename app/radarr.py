@@ -91,24 +91,54 @@ def fetch_radarr_releases(
             status = release_info_resp.status_code
 
             if status in RETRYABLE_STATUS_CODES:
-                sleep_with_backoff(attempt)
-                continue
+                logging.warning(
+                    "Retryable Radarr status %s for %s: %s attempt=%s",
+                    status,
+                    radarr_movie_id,
+                    movie_name,
+                    attempt + 1,
+                )
+                if attempt < MAX_ATTEMPTS - 1:
+                    sleep_with_backoff(attempt)
+                    continue
+                return None
 
             if status >= 400:
+                logging.warning(
+                    "Non-retryable Radarr status %s for %s: %s",
+                    status,
+                    radarr_movie_id,
+                    movie_name,
+                )
                 return None
 
             release_info = release_info_resp.json()
             return release_info
-        except (requests.exceptions.RequestException, ValueError) as e:
+        except requests.exceptions.RequestException as e:
             logging.warning(
-                f"Radarr query failed for {radarr_movie_id}: {movie_name} exception: {e}"
+                "Radarr query failed for %s: %s attempt=%s exception=%s",
+                radarr_movie_id,
+                movie_name,
+                attempt + 1,
+                e,
             )
-            sleep_with_backoff(attempt)
-
+            if attempt < MAX_ATTEMPTS - 1:
+                sleep_with_backoff(attempt)
+                continue
+        except ValueError as e:
+            logging.warning(
+                "Received response that couldn't be parsed for %s: %s exception=%s",
+                radarr_movie_id,
+                movie_name,
+                e,
+            )
+            return None
     return None
 
 
-def update_release(conn: sqlite3.Connection, radarr_movie_id: int, state: int) -> None:
+def update_release_check_result(
+    conn: sqlite3.Connection, radarr_movie_id: int, state: int
+) -> None:
     cursor = conn.cursor()
     last_checked = datetime.now().isoformat()
     cursor.execute(
@@ -122,24 +152,38 @@ def update_release(conn: sqlite3.Connection, radarr_movie_id: int, state: int) -
     conn.commit()
 
 
-def process_release_checks(conn: sqlite3.Connection, n: int | None = None) -> None:
+def process_release_checks(
+    conn: sqlite3.Connection, n: int | None = None
+) -> dict[str, int]:
     rows = get_movies_for_release_check(conn, n)
+    summary = {
+        "selected": len(rows),
+        "checked": 0,
+        "found_4k": 0,
+        "not_found": 0,
+        "failed": 0,
+    }
     for radarr_movie_id, movie_name in rows:
         start = perf_counter()
         release_info = fetch_radarr_releases(radarr_movie_id, movie_name)
         if release_info is None:
+            summary["failed"] += 1
             continue
         count = count_4k_releases(release_info)
         if count >= MIN_4K_RELEASE_MATCHES:
+            summary["found_4k"] += 1
             state = 1
             logging.info(f"4k Upgrade found for {movie_name}")
         else:
+            summary["not_found"] += 1
             state = 0
             logging.info(f"4k Upgrade not found for {movie_name}")
 
-        update_release(conn, radarr_movie_id, state)
+        update_release_check_result(conn, radarr_movie_id, state)
         elapsed = perf_counter() - start
         logging.info("%s radarr_query took %.2fs", movie_name, elapsed)
+    summary["checked"] = summary["found_4k"] + summary["not_found"]
+    return summary
 
 
 def contact_radarr(movie_tmdbid: int) -> int | None:

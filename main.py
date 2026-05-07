@@ -3,6 +3,7 @@ from time import perf_counter
 from app.db import setup_db
 from app.radarr import process_release_checks, contact_radarr
 from app.jellyfin import organize_movies, fetch_jellyfin_movies
+from app.reporting import format_release_summary
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -22,8 +23,10 @@ def main():
     logging.info("organize_movies() took %.2fs", perf_counter() - start)
 
     start = perf_counter()
-    process_release_checks(conn)
+    summary = process_release_checks(conn)
     logging.info("process_release_checks() took %.2fs", perf_counter() - start)
+    formatted_summary = format_release_summary(summary)
+    logging.info(formatted_summary)
 
 
 if __name__ == "__main__":
