@@ -66,6 +66,7 @@
               python-dotenv
               streamlit
               sqlalchemy
+              pytest
             ])
             ++ [
               pkgs.git-filter-repo
